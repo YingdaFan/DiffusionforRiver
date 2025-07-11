@@ -1,0 +1,91 @@
+
+# ============================================================================
+# 合并配置文件：CNF + Diffusion 训练
+# ============================================================================
+
+# ============================================================================
+# 第一阶段：Conditional Neural Field (CNF) 训练参数
+# ============================================================================
+
+# --- 数据路径 ---
+data_path: /home/yif47/river/river-dl/temporal/datasets/colorado/train_data.npy
+coor_path: /home/yif47/river/river-dl/temporal/datasets/colorado/train_coords.npy
+cnf_save_path: Input/cnf_model/checkpoint
+load_data_fn: load_stream_flow
+
+# --- CNF 训练设置 ---
+cnf_multiGPU: 1
+cnf_batch_size: 64
+cnf_test_batch_size: 256
+cnf_epochs: 100
+cnf_save_every: 10
+
+# --- 数据描述 ---
+readin_data_shape: "t N c"  # t=时间步, N=节点数, c=特征数
+batch_shape: "t N c"
+cnf_dims: 3  # 空间维度：lat, lon, elevation
+normalizer:
+  method: '-11'
+  dim: 0
+
+# --- 损失函数与评估标准 ---
+cnf_loss_fn: MSELoss
+cnf_test_criteria: rMAE
+
+# --- CNF 模型架构 ---
+hidden_size: 128  # 关键参数：潜在向量维度，必须与diffusion的latent_length一致
+lumped_latent: True
+
+NF:
+  name: SIRENAutodecoder_film
+  in_coord_features: 3
+  num_hidden_layers: 10
+  out_features: 9      # 8个输入特征 + 1个输出特征 = 9
+  hidden_features: 128
+
+# --- CNF 学习率 ---
+cnf_lr:
+  nf: 1.e-4
+  latents: 1.e-5
+
+# ============================================================================
+# 第二阶段：Unconditional Diffusion 训练参数
+# ============================================================================
+
+# --- Diffusion 模型参数 ---
+diffusion_batch_size: 16
+diffusion_test_batch_size: 16
+
+# 关键参数：必须与CNF的hidden_size保持一致
+time_length: 128  # 时间步数
+latent_length: 128  # 潜在向量维度，必须等于CNF的hidden_size
+
+image_size: 128  # 图像尺寸，通常等于time_length
+num_channels: 128
+num_res_blocks: 2
+num_heads: 4
+num_head_channels: 32
+attention_resolutions: "64,32"
+channel_mult: "1,1,2,2,4,4"
+dims: 2  # 使用2D U-Net建模潜在-时间图像
+
+# --- Diffusion 训练参数 ---
+steps: 1000
+noise_schedule: "cosine"
+sliding_window: False
+split_method: "sliding"  # 数据切割方法：sliding 或 split
+
+microbatch: -1
+diffusion_lr: 1.e-4
+ema_rate: "0.9999"
+log_interval: 500
+save_interval: 5000
+lr_anneal_steps: 500000
+
+# --- 路径设置 ---
+diffusion_checkpoint_path: "Input/diff_model/checkpoint"
+diffusion_train_data_path: "Input/cnf_model/latent_vector/train_data.npy"
+diffusion_valid_data_path: "Input/cnf_model/latent_vector/valid_data.npy"
+scale_path: "Input/data_scale"
+ema_path: "Input/diff_model/ema_model.pt"
+

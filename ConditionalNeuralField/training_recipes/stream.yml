@@ -1,0 +1,40 @@
+# --- 数据路径 ---
+data_path: /home/yif47/river/river-dl/temporal/datasets/colorado/train_data.npy
+coor_path: /home/yif47/river/river-dl/temporal/datasets/colorado/train_coords.npy  # 修正：coor_path 而不是 coord_path
+save_path: Input/cnf_model/checkpoint
+load_data_fn: load_stream_flow  # 需要自定义数据加载函数
+
+# --- 训练设置 ---
+multiGPU: 1
+batch_size: 64
+test_batch_size: 256
+epochs: 100
+save_every: 10
+
+# --- 数据描述 ---
+readin_data_shape: "t N c"  # t=时间步, N=节点数, c=特征数
+batch_shape: "t N c"
+dims: 3  # 空间维度：lat, lon, elevation
+normalizer:
+  method: '-11'
+  dim: 0
+
+# --- 损失函数与评估标准 ---
+loss_fn: MSELoss
+test_criteria: rMAE
+
+# --- 模型架构 ---
+hidden_size: 128
+lumped_latent: True
+
+NF:
+  name: SIRENAutodecoder_film
+  in_coord_features: 3  # 修正：实际只有1维坐标
+  num_hidden_layers: 10
+  out_features: 9      # 8个输入特征 + 1个输出特征 = 9
+  hidden_features: 128
+
+# --- 学习率 ---
+lr:
+  nf: 1.e-4
+  latents: 1.e-5

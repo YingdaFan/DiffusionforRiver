@@ -1,0 +1,42 @@
+## inference specific args
+#model:
+batch_size: 16
+test_batch_size: 16
+
+time_length: 128 # 时间步数，需要根据实际数据调整
+latent_length: 128  # 潜在向量维度，从stream.yml的hidden_size: 256
+
+image_size: 128  # 设置为256，因为潜在-时间图像是256x256
+num_channels: 128
+num_res_blocks: 2
+num_heads: 4
+num_head_channels: 32
+attention_resolutions: "64,32" #128,64,32
+channel_mult: "1,1,2,2,4,4"
+dims: 2  # 使用2D U-Net建模潜在-时间图像
+
+ema_path: "Input/diff_model/ema_model.pt"
+
+#diff:
+steps: 1000
+noise_schedule: "cosine"
+sliding_window: False
+
+
+
+cnf_case_file_path: "ConditionalNeuralField/training_recipes/stream.yml"
+
+## train specific args
+microbatch: -1
+lr: 1.e-4
+ema_rate: "0.9999"
+log_interval: 500
+save_interval: 5000
+lr_anneal_steps: 500000 
+
+
+# 路径设置
+checkpoint_path: "Input/diff_model/checkpoint"
+train_data_path: "Input/cnf_model/latent_vector/train_data.npy"
+valid_data_path: "Input/cnf_model/latent_vector/valid_data.npy"
+scale_path: "Input/data_scale"
