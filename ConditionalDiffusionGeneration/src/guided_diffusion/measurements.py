@@ -285,21 +285,59 @@ class InflowPredictionOperator(NonLinearOperator):
         # 将 [-1, 1] 范围的latent还原
         return ((norm_data[:, 0, ...] + 1) * (self.max_val - self.min_val) / 2 + self.min_val)[:, None, ...]
 
-    def forward(self, data, **kwargs):
-        data_reshaped = rearrange(self._unnorm(data), "s c t l -> (s c t) l")
-        
-        # full_features 的形状应为 [时间步数, basin数量, 所有特征数量]
-        full_features = pass_through_model_batch(self.coords, data_reshaped, self.model, 
-                                                 self.x_normalizer, self.y_normalizer,
-                                                 self.batch_size, self.device)
+    # def forward(self, data, **kwargs):
 
-        # 2. **这就是新的操作员 F 的核心**：
-        #    从完整的预测特征中，丢弃'inflow'列，只返回我们已知的那些特征
-        #    创建一个索引来选择除了 'inflow' 之外的所有列
-        all_indices = list(range(full_features.shape[-1]))
-        known_indices = [i for i in all_indices if i != self.inflow_col_index]
+    #     data_reshaped = rearrange(self._unnorm(data), "s c t l -> (s c t) l")
+
+    #     # full_features 的形状应为 [时间步数, basin数量, 所有特征数量]
+    #     full_features = pass_through_model_batch(self.coords, data_reshaped, self.model, 
+    #                                              self.x_normalizer, self.y_normalizer,
+    #                                              self.batch_size, self.device)
+
+    #     # 创建索引来选择除了 'inflow' 之外的所有列
+    #     all_indices = list(range(full_features.shape[-1]))
+    #     known_indices = [i for i in all_indices if i != self.inflow_col_index]
+
+    #     # 尝试重塑以匹配期望的输出
+    #     # 这里需要根据实际情况调整
+    #     return full_features[..., known_indices]
+    
+# In file: ConditionalDiffusionGeneration/src/guided_diffusion/measurements.py
+# Inside class InflowPredictionOperator:
+
+    def forward(self, data, **kwargs):
+        # data shape is [s, c, t, l], for example [10, 1, 128, 128]
+        s, c, t, l = data.shape
+        # 我们可以加一个断言来确保通道维度总是1，因为后续逻辑依赖于此
+        assert c == 1, f"Channel dimension 'c' is expected to be 1, but got {c}."
+
+        # 1. UNNORM: 这一步没问题，它会保持 [s, 1, t, l] 的形状
+        data_unnormed = self._unnorm(data)
+
+        # 2. REARRANGE for DECODER: 【核心修正】
+        #    使用 "s 1 t l -> (s t) l" 模式。
+        #    这明确告诉 einops：输入的第二个维度必须是1，并且在输出中将其“压平”，不再存在。
+        #    这样就解决了 'c' 未被处理的问题。
+        data_reshaped = rearrange(data_unnormed, "s 1 t l -> (s t) l")
+
+        # 3. DECODER CALL: 这一步是正确的。
+        #    输入是 [(s*t), l], 输出是 [(s*t), num_basins, num_features]
+        full_features = pass_through_model_batch(self.coords, data_reshaped, self.model,
+                                                self.x_normalizer, self.y_normalizer,
+                                                self.batch_size, self.device)
+
+        # 4. REARRANGE to FINAL SHAPE: 这一步也是正确的。
+        #    将解码后的场恢复为 4D 批次结构 [s, t, num_basins, num_features]
+        full_features_rearranged = rearrange(full_features, "(s t) co c_out -> s t co c_out", s=s)
+
+        # 5. SLICING: 这一步是正确的。
+        known_indices = [i for i in range(full_features_rearranged.shape[-1]) if i != self.inflow_col_index]
+
+        # 6. RETURN: 返回一个干净的4D张量，例如 [10, 128, 30, 8]
+        return full_features_rearranged[..., known_indices]
         
-        return full_features[..., known_indices]
+
+
 # =============
 # Noise classes
 # =============

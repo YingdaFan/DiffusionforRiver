@@ -187,7 +187,8 @@ class GaussianDiffusion:
             out = self.p_sample(x=img, t=time, model=model)
             
             # Give condition.
-            noisy_measurement = self.q_sample(measurement, t=time)
+            measurement_t = torch.tensor([time[0].item()], device=time.device)
+            noisy_measurement = self.q_sample(measurement, t=measurement_t)
 
             # TODO: how can we handle argument for different condition method?
             img, distance = measurement_cond_fn(x_t=out['sample'],
@@ -366,7 +367,7 @@ class DDPM(SpacedDiffusion):
         sample = out['mean']
 
         noise = torch.randn_like(x)
-        if t != 0:  # no noise when t == 0
+        if t[0] != 0:  # no noise when t == 0
             sample += torch.exp(0.5 * out['log_variance']) * noise
 
         return {'sample': sample, 'pred_xstart': out['pred_xstart']}
@@ -394,7 +395,7 @@ class DDIM(SpacedDiffusion):
         )
 
         sample = mean_pred
-        if t != 0:
+        if t[0] != 0:
             sample += sigma * noise
         
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}

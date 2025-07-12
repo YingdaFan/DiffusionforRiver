@@ -24,51 +24,104 @@ from ConditionalDiffusionGeneration.src.guided_diffusion.gaussian_diffusion impo
 from ConditionalNeuralField.cnf.inference_function import decoder
 from einops import rearrange
 
+# def process_single_window(measurement, no_of_samples, time_length, latent_size, 
+#                         device, sample_fn, operator, cnf_config, feature_info):
+#     """
+#     处理单个窗口的推理
+#     （使用循环逐个生成样本，以避免批处理错误）
+#     """
+#     measurement_device = measurement.to(device)
+#     samples = []
+#     for i in range(no_of_samples):
+#         print(f"  生成样本 {i+1}/{no_of_samples}...")
+        
+#         # 每次只生成一个样本 (batch size = 1)
+#         x_start = torch.randn(1, 1, time_length, latent_size, device=device)
+        
+#         sample = sample_fn(x_start=x_start, measurement=measurement_device, record=False, save_root=None)
+#         samples.append(sample)
+#     print("  样本生成完成，正在解码...")
+#     # 将所有样本的潜在向量拼接在一起
+#     gen_latents = torch.cat(samples, dim=0)
+#     gen_latents = operator._unnorm(gen_latents)
+#     gen_latents = gen_latents[:, 0]
+#     # 使用 decoder 函数将潜在向量解码回真实测量空间
+#     coords = torch.tensor(np.load('/home/yif47/river/river-dl/temporal/datasets/colorado/test_coords.npy'), device=device, dtype=torch.float32)
+#     print("Coords shape:", coords.shape)
+#     xnorm = operator.x_normalizer
+#     ynorm = operator.y_normalizer
+#     model = operator.model
+#     gen_latents_cnf_input = rearrange(gen_latents, "s t l -> (s t) l")
+#     gen_fields = decoder(coords, gen_latents_cnf_input, model, xnorm, ynorm, 
+#                          batch_size=cnf_config['cnf_batch_size'], device=device)
+#     gen_fields = rearrange(gen_fields, "(s t) co c -> s t co c", t=time_length)
+#     # 提取预测的inflow
+#     predicted_inflow = gen_fields[..., feature_info['inflow_index']:feature_info['inflow_index']+1]
+#     return predicted_inflow
+
+
+
+
+
 def process_single_window(measurement, no_of_samples, time_length, latent_size, 
-                        device, sample_fn, operator, cnf_config, feature_info):
+                                device, sample_fn, operator, cnf_config, feature_info):
     """
-    处理单个窗口的推理
-    （使用循环逐个生成样本，以避免批处理错误）
+    处理单个窗口的推理 (高效批处理版本)
     """
-    
+    print("采用高效批处理模式...")
+
+    # measurement 已经是 4D 的 [1, T, B, F]
     measurement_device = measurement.to(device)
     
-    samples = []
-    for i in range(no_of_samples):
-        print(f"  生成样本 {i+1}/{no_of_samples}...")
-        
-        # 每次只生成一个样本 (batch size = 1)
-        x_start = torch.randn(1, 1, time_length, latent_size, device=device)
-        
-        sample = sample_fn(x_start=x_start, measurement=measurement_device, record=False, save_root=None)
-        samples.append(sample)
+    # 1. 创建一个批次 (batch) 的初始噪声，大小为 [no_of_samples, ...]
+    #    而不是在循环中每次创建一个
+    print(f"一次性创建 {no_of_samples} 个样本的初始噪声批次...")
+    x_start = torch.randn(no_of_samples, 1, time_length, latent_size, device=device)
     
-    print("  样本生成完成，正在解码...")
+    # 2. 对整个批次执行一次采样循环
+    #    sample_fn 内部的条件函数会将 4D measurement 与批次中的每个样本进行比较
+    print("开始对整个批次进行采样...")
+    gen_latents = sample_fn(x_start=x_start, measurement=measurement_device, record=False, save_root=None)
     
-    # 将所有样本的潜在向量拼接在一起
-    gen_latents = torch.cat(samples, dim=0)
-    gen_latents = operator._unnorm(gen_latents)
-    gen_latents = gen_latents[:, 0]
+    # 经过 sample_fn, gen_latents 的形状已经是 [no_of_samples, 1, time_length, latent_size]
+    # 不再需要 torch.cat
+    print("批次采样完成，正在解码...")
     
+    # === 以下的解码部分与我们之前修正的版本完全相同，无需改动 ===
+
     # 使用 decoder 函数将潜在向量解码回真实测量空间
     coords = torch.tensor(np.load('/home/yif47/river/river-dl/temporal/datasets/colorado/test_coords.npy'), device=device, dtype=torch.float32)
-    
+
     xnorm = operator.x_normalizer
     ynorm = operator.y_normalizer
     model = operator.model
     
-    gen_latents_cnf_input = rearrange(gen_latents, "s t l -> (s t) l")
-    
-
+    gen_latents_unnormed = operator._unnorm(gen_latents)
+    gen_latents_cnf_input = rearrange(gen_latents_unnormed, "s 1 t l -> (s t) l")
     
     gen_fields = decoder(coords, gen_latents_cnf_input, model, xnorm, ynorm, 
                          batch_size=cnf_config['cnf_batch_size'], device=device)
-    gen_fields = rearrange(gen_fields, "(s t) co c -> s t co c", t=time_length)
     
-    # 提取预测的inflow
-    predicted_inflow = gen_fields[..., feature_info['inflow_index']:feature_info['inflow_index']+1]
+    gen_fields_4d = rearrange(gen_fields, "(s t) co c -> s t co c", s=no_of_samples, t=time_length)
+    
+    predicted_inflow = gen_fields_4d[..., feature_info['inflow_index']:feature_info['inflow_index']+1]
     
     return predicted_inflow
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def main():
     # 设置设备
@@ -108,9 +161,11 @@ def main():
     # 仅截取前128个时间步进行测试
     true_measurement = true_measurement_full[:time_length]
     true_inflow = true_inflow_full[:time_length]
+    true_measurement_4d = true_measurement.unsqueeze(0) 
+
     
     print(f"\n--- 仅测试前 {time_length} 个时间步 ---")
-    print(f"截取后的已知特征数据形状: {true_measurement.shape}")
+    print(f"Measurement shape: {true_measurement.shape}")
     print(f"截取后的真实inflow数据形状: {true_inflow.shape}\n")
     
     # 加载训练好的无条件模型
@@ -123,7 +178,7 @@ def main():
                                num_head_channels=training_config['num_head_channels'],
                                attention_resolutions=training_config['attention_resolutions'],
                                dims=training_config['dims'],
-                               model_path='/home/yif47/river/river-dl/temporal/Confield/Input/diff_model/checkpoint/ema_0.9999_045000.pt'
+                               model_path='/home/yif47/river/river-dl/temporal/Confield/Input/diff_model/checkpoint/ema_0.9999_060000.pt'
                             )
     u_net_model.to(device)
     u_net_model.eval()
@@ -152,7 +207,7 @@ def main():
     noiser = get_noise(sigma=0.0, name='gaussian')
     
     # 条件化方法
-    cond_method = get_conditioning_method(operator=operator, noiser=noiser, name='ps', scale=0.05)
+    cond_method = get_conditioning_method(operator=operator, noiser=noiser, name='ps', scale=1e-4)
     measurement_cond_fn = partial(cond_method.conditioning)
     
     # 采样器
@@ -169,7 +224,7 @@ def main():
     sample_fn = partial(sampler.p_sample_loop, model=u_net_model, measurement_cond_fn=measurement_cond_fn)
     
     # 生成参数
-    no_of_samples = 10
+    no_of_samples = 1
     latent_size = training_config['latent_length']
     
     print(f"生成参数:")
@@ -178,7 +233,7 @@ def main():
     # --- 直接进行单窗口推理 ---
     print("\n开始单窗口推理...")
     predicted_inflow = process_single_window(
-        true_measurement, no_of_samples, 
+        true_measurement_4d, no_of_samples, 
         time_length, latent_size, device, sample_fn, operator, 
         cnf_config, feature_info
     )
